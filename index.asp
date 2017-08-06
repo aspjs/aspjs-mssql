@@ -1,9 +1,6 @@
 <%
 
 define('mssql', function(require, exports, module) {
-	var util = require('util');
-	var global_connection = null;
-	
 	var TYPES = {
 		TinyInt: function() {return {id: 16, type: TYPES.TinyInt}},
 		SmallInt: function() {return {id: 2, type: TYPES.SmallInt}},
@@ -78,8 +75,7 @@ define('mssql', function(require, exports, module) {
 				error = ex;
 			};
 			
-			util.defer(done, error);
-			
+			done(error, this);
 			return this;
 		},
 		close: function close(done) {
@@ -92,19 +88,19 @@ define('mssql', function(require, exports, module) {
 				error = ex;
 			};
 			
-			util.defer(done, error);
-	
+			done(error, this);
 			return this;
 		}
 	});
 	
 	Request = function Request(connection) {
-		if (!connection) connection = global_connection;
+		if (!connection) connection = __globals.mssql;
 
 		this._command = Server.CreateObject("ADODB.Command");
 		this._command.Parameters.Append(this._command.CreateParameter('@RETURN_VALUE', 3, 4, 0, null));
 		this._command.ActiveConnection = connection._connection;
-	
+
+		this._silent = false;
 		this.parameters = {};
 	};
 	
@@ -122,8 +118,12 @@ define('mssql', function(require, exports, module) {
 				if (type === TYPES.DateTime && value instanceof Date) value = value.toISOString();
 				if (value === undefined) value = null;
 				if (value !== value) value = null;
+
+				if (!this._silent) console.sql('input', name, type.type, value);
 				
-				if (type.id === 200 || type.id === 201 || type.id === 202 || type.id === 203 || type.id === 204) {
+				if (value === null) {
+					this._command.Parameters.Append(this._command.CreateParameter('@'+ name, type.id, 1, -1, null));
+				} else if (type.id === 200 || type.id === 201 || type.id === 202 || type.id === 203 || type.id === 204) {
 					value = String(value);
 					type.length = type.length || value.length;
 					
@@ -134,13 +134,12 @@ define('mssql', function(require, exports, module) {
 						var param = this._command.CreateParameter('@'+ name, type.id, 1, -1, null);
 						this._command.Parameters.Append(param); param.AppendChunk(value);
 					} else {
-						this._command.Parameters.Append(this._command.CreateParameter('@'+ name, type.id, 1, type.length || 0, value));
+						this._command.Parameters.Append(this._command.CreateParameter('@'+ name, type.id, 1, type.length || 1, value));
 					};
 				} else {
 					this._command.Parameters.Append(this._command.CreateParameter('@'+ name, type.id, 1, type.length || 0, value));
 				};
 				
-				//console.log('mssql.input', name, type, value);
 				this.parameters[name] = {
 					name: name,
 					type: type,
@@ -158,6 +157,10 @@ define('mssql', function(require, exports, module) {
 			try {
 				if (type instanceof Function) type = type();
 	
+				if (type.id === 200 || type.id === 201 || type.id === 202 || type.id === 203 || type.id === 204) {
+					if (!type.length) throw new Error('You must specify length of string output parameters!');
+				}
+
 				this._command.Parameters.Append(this._command.CreateParameter('@'+ name, type.id, 2, type.length || 0, null));
 				
 				//console.log('mssql.output', name, type);
@@ -168,7 +171,7 @@ define('mssql', function(require, exports, module) {
 					value: null
 				};
 			} catch (ex) {
-				ex = new Error('Invalid input parameter \''+ name +'\'. '+ ex.message);
+				ex = new Error('Invalid output parameter \''+ name +'\'. '+ ex.message);
 				ex.stack = Error.captureStackTrace();
 				throw ex;
 			};
@@ -177,6 +180,8 @@ define('mssql', function(require, exports, module) {
 		execute: function execute(procedure, done) {
 			this._command.CommandType = 4;
 			this._command.CommandText = procedure;
+
+			if (!this._silent) console.sql('exec', procedure);
 			
 			var rst = Server.CreateObject("ADODB.Recordset");
 			rst.CacheSize = 50;
@@ -187,6 +192,7 @@ define('mssql', function(require, exports, module) {
 			try {
 				rst.open(this._command);
 			} catch (ex) {
+				if (!this._silent) console.sql('error', ex.message);
 				ex.stack = ex.stack || Error.captureStackTrace();
 				error = ex;
 			};
@@ -200,6 +206,7 @@ define('mssql', function(require, exports, module) {
 				while (!e.atEnd()) {
 					var i = e.item();
 					if (i.Direction === 2 || i.Direction === 3) this.parameters[i.Name.substr(1)].value = i.Value;
+					if (!this._silent) console.sql('output', i.Name.substr(1), i.Value);
 					e.moveNext();
 				};
 				
@@ -217,14 +224,20 @@ define('mssql', function(require, exports, module) {
 					rst.close();
 				};
 			};
+
+			if (!this._silent) {
+				console.sql('recordset', recordset);
+				console.sql('return', returnValue);
+			}
 			
-			util.defer(done, error, recordset, returnValue);
-			
+			done.call(this, error, recordset, returnValue);
 			return this;
 		},
 		query: function query(command, done) {
 			this._command.CommandType = 1;
 			this._command.CommandText = command;
+
+			if (!this._silent) console.sql('query', command);
 			
 			var rst = Server.CreateObject("ADODB.Recordset");
 			rst.CursorType = 0;
@@ -233,6 +246,7 @@ define('mssql', function(require, exports, module) {
 			var error = null, recordset = null;
 			
 			try {
+				if (!this._silent) console.sql('error', ex.message);
 				rst.open(this._command);
 			} catch (ex) {
 				ex.stack = ex.stack || Error.captureStackTrace();
@@ -257,10 +271,16 @@ define('mssql', function(require, exports, module) {
 					rst.close();
 				};
 			};
+
+			if (!this._silent) {
+				console.sql('recordset', recordset);
+			}
 			
-			util.defer(done, error, recordset);
-	
+			done.call(this, done, error, recordset);
 			return this;
+		},
+		silent: function silent() {
+			this._silent = true;
 		}
 	});
 	
@@ -268,13 +288,13 @@ define('mssql', function(require, exports, module) {
 		Connection: Connection,
 		Request: Request,
 		connect: function connect(config, callback) {
-			global_connection = new Connection(config);
-			global_connection.connect(callback);
-			return global_connection;
+			__globals.mssql = new Connection(config);
+			__globals.mssql.connect(callback);
+			return __globals.mssql;
 		},
 		close: function close() {
-			if (!global_connection) return;
-			global_connection.close(callback);
+			if (!__globals.mssql) return;
+			__globals.mssql.close(callback);
 		}
 	};
 	
