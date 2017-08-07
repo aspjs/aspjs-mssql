@@ -88,7 +88,7 @@ define('mssql', function(require, exports, module) {
 				error = ex;
 			};
 			
-			done(error, this);
+			if (typeof done === 'function') done(error, this);
 			return this;
 		}
 	});
