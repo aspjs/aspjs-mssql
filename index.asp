@@ -246,9 +246,10 @@ define('mssql', function(require, exports, module) {
 			var error = null, recordset = null;
 			
 			try {
-				if (!this._silent) console.sql('error', ex.message);
+				
 				rst.open(this._command);
 			} catch (ex) {
+				if (!this._silent) console.sql('error', ex.message);
 				ex.stack = ex.stack || Error.captureStackTrace();
 				error = ex;
 			};
